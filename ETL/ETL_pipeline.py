@@ -14,6 +14,7 @@ DB_NAME = os.getenv("DB_NAME")
 def etl_pipeline(data_path):
     try:
         df = pd.read_csv(data_path, encoding='unicode_escape')
+        df = df.rename(columns={'Invoice': 'InvoiceNo', 'Price': 'UnitPrice', 'Customer ID': 'CustomerID'})
 
         # 1. Cleaning InvoiceNo and StockCode (Handling mixed types)
         def extract_numeric(value):
@@ -44,7 +45,7 @@ def etl_pipeline(data_path):
         df['Quantity'] = df['Quantity'].astype(int)
         df['Country'] = df['Country'].astype(str)
         df['UnitPrice'] = df['UnitPrice'].astype(float)
-        df['InvoiceDate'] = pd.to_datetime(df['InvoiceDate'], dayfirst=True)
+        df['InvoiceDate'] = pd.to_datetime(df['InvoiceDate'], format='%Y-%m-%d %H:%M:%S')
         df['InvoiceDate'] = df['InvoiceDate'].dt.strftime('%Y-%m-%d %H:%M:%S')
 
         # 3. Transformation
@@ -61,7 +62,7 @@ def etl_pipeline(data_path):
 
 
 # 1. Process Data (Pandas)
-data_file = "Online Retail.csv"  # Replace with your CSV file path
+data_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Online Retail.csv")
 cleaned_df = etl_pipeline(data_file)
 
 if cleaned_df is not None:
@@ -113,11 +114,16 @@ if cleaned_df is not None:
     try:
         columns = ", ".join(cleaned_df.columns)
         placeholders = ", ".join(["%s"] * len(cleaned_df.columns))
-        sql = f"INSERT INTO transactions ({columns}) VALUES ({placeholders})"
-        mycursor.executemany(sql, cleaned_df.values.tolist())  # Use executemany
+        sql = f"INSERT IGNORE INTO transactions ({columns}) VALUES ({placeholders})"
 
-        mydb.commit()
-        print("Data loaded successfully to MySQL.")
+        all_rows = cleaned_df.values.tolist()
+        batch_size = 10000
+
+        for i in range(0, len(all_rows), batch_size):
+            batch = all_rows[i:i + batch_size]
+            mycursor.executemany(sql, batch)
+            mydb.commit()
+            print(f"Inserted {i + len(batch)} of {len(all_rows)} rows")
 
     except mysql.connector.Error as err:
         print(f"MySQL Error (Data Load): {err}")
